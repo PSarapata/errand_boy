@@ -1,0 +1,15 @@
+[application]
+name = "errand_boy"
+default_platform = "desktop"
+
+[bundle]
+identifier = "com.example.errand_boy"
+publisher = "Pawel Sarapata Technologies"
+
+[web.app]
+base_path = "/"
+
+[web.resource]
+dev = { style = [], script = [] }
+style = []
+script = []
