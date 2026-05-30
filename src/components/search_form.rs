@@ -160,11 +160,10 @@ pub fn SearchForm(
                                 Key::Tab => {
                                     commit_chip();
                                 }
-                                Key::Backspace => {
-                                    if exclude_input().is_empty() {
+                                Key::Backspace
+                                    if exclude_input().is_empty() => {
                                         exclude_chips.write().pop();
                                     }
-                                }
                                 _ => {}
                             }
                         }

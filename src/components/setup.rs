@@ -89,11 +89,10 @@ pub fn Setup(on_done: EventHandler<AppConfig>) -> Element {
         },
 
         SetupStep::PickModel(provider, models) => {
-            if selected_model().is_empty() {
-                if let Some(default) = models.first() {
+            if selected_model().is_empty()
+                && let Some(default) = models.first() {
                     selected_model.set(default.clone());
                 }
-            }
             let provider_label = provider.label();
             rsx! {
                 div { class: "setup-screen",

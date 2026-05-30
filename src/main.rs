@@ -218,7 +218,7 @@ fn inject_images(
             }
 
             serp.iter().find_map(|r| {
-                if r.image.is_none() { return None; }
+                r.image.as_ref()?;
                 let t = r.title.to_lowercase();
                 let brand_hit = brand_words.iter().any(|w| t.contains(&w.to_lowercase()));
                 let model_hit = model_words.iter().any(|w| t.contains(&w.to_lowercase()));

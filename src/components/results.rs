@@ -29,9 +29,9 @@ pub fn Results(groups: Vec<ProductGroup>, on_open_url: EventHandler<String>) -> 
         let k = key(&g);
         if dismissed_keys.contains(&k) {
             manually_dismissed.push(g);
-        } else if g.match_score < min_score() {
-            auto_filtered.push(g);
-        } else if hide_out_of_stock() && !g.listings.iter().any(|l| l.in_stock.unwrap_or(true)) {
+        } else if g.match_score < min_score()
+            || (hide_out_of_stock() && !g.listings.iter().any(|l| l.in_stock.unwrap_or(true)))
+        {
             auto_filtered.push(g);
         } else {
             main.push(g);
@@ -39,7 +39,7 @@ pub fn Results(groups: Vec<ProductGroup>, on_open_url: EventHandler<String>) -> 
     }
 
     match sort() {
-        SortOrder::Score => main.sort_by(|a, b| b.match_score.cmp(&a.match_score)),
+        SortOrder::Score => main.sort_by_key(|b| std::cmp::Reverse(b.match_score)),
         SortOrder::PriceAsc => main.sort_by(|a, b| {
             let pa = a.listings.first().and_then(|l| parse_price(&l.price)).unwrap_or(f64::MAX);
             let pb = b.listings.first().and_then(|l| parse_price(&l.price)).unwrap_or(f64::MAX);
@@ -122,7 +122,7 @@ pub fn Results(groups: Vec<ProductGroup>, on_open_url: EventHandler<String>) -> 
                 for group in main {
                     ProductCard {
                         group: group.clone(),
-                        on_open_url: on_open_url.clone(),
+                        on_open_url: on_open_url,
                         on_dismiss: {
                             let k = key(&group);
                             move |_| dismissed.write().push(k.clone())
@@ -151,7 +151,7 @@ pub fn Results(groups: Vec<ProductGroup>, on_open_url: EventHandler<String>) -> 
                                     for group in auto_filtered {
                                         TrayCard {
                                             group: group,
-                                            on_open_url: on_open_url.clone(),
+                                            on_open_url: on_open_url,
                                             on_restore: EventHandler::new(|_| {}),
                                         }
                                     }
@@ -163,7 +163,7 @@ pub fn Results(groups: Vec<ProductGroup>, on_open_url: EventHandler<String>) -> 
                                     for group in manually_dismissed {
                                         TrayCard {
                                             group: group.clone(),
-                                            on_open_url: on_open_url.clone(),
+                                            on_open_url: on_open_url,
                                             on_restore: {
                                                 let k = key(&group);
                                                 EventHandler::new(move |_| {
@@ -246,7 +246,7 @@ fn ProductCard(
                         for listing in group.listings {
                             ListingRow {
                                 listing: listing,
-                                on_open_url: on_open_url.clone(),
+                                on_open_url: on_open_url,
                             }
                         }
                     }
@@ -345,9 +345,53 @@ fn ListingRow(listing: Listing, on_open_url: EventHandler<String>) -> Element {
 }
 
 fn parse_price(price: &str) -> Option<f64> {
+    // Strip everything except digits, dots, and commas, then normalise to a
+    // single decimal separator. Handles both "1,299.00" and "1.299,00" styles:
+    // if the last separator is a comma treat commas as decimal, else treat dots.
     let digits: String = price.chars()
         .filter(|c| c.is_ascii_digit() || *c == '.' || *c == ',')
         .collect();
-    let normalised = digits.replace(',', ".");
+    let last_comma = digits.rfind(',');
+    let last_dot = digits.rfind('.');
+    let normalised = match (last_comma, last_dot) {
+        (Some(ci), Some(di)) if ci > di => {
+            // "1.299,00" — comma is decimal separator
+            digits.replace('.', "").replace(',', ".")
+        }
+        _ => {
+            // "1,299.00" or no ambiguity — dot is decimal separator (or absent)
+            digits.replace(',', "")
+        }
+    };
     normalised.parse::<f64>().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_price;
+
+    #[test]
+    fn parse_price_dollar_sign() {
+        assert_eq!(parse_price("$499.99"), Some(499.99));
+    }
+
+    #[test]
+    fn parse_price_european_comma() {
+        assert_eq!(parse_price("1.299,00 €"), Some(1299.00));
+    }
+
+    #[test]
+    fn parse_price_plain_integer() {
+        assert_eq!(parse_price("250"), Some(250.0));
+    }
+
+    #[test]
+    fn parse_price_dash_returns_none() {
+        assert_eq!(parse_price("—"), None);
+    }
+
+    #[test]
+    fn parse_price_empty_returns_none() {
+        assert_eq!(parse_price(""), None);
+    }
 }

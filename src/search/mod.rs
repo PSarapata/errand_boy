@@ -46,7 +46,7 @@ struct ValueSerpItem {
 pub fn build_serp_query(query: &str, exclude: Option<&str>) -> String {
     let mut q = query.to_string();
     if let Some(ex) = exclude {
-        for token in ex.split(|c: char| c == ',' || c == ' ') {
+        for token in ex.split([',', ' ']) {
             let token = token.trim();
             if !token.is_empty() {
                 q.push(' ');
@@ -66,7 +66,7 @@ pub async fn search(
     pages: u32,
 ) -> (Result<Vec<SearchResult>, String>, String, String) {
     let serp_query = build_serp_query(query, exclude);
-    let pages = pages.max(1).min(5);
+    let pages = pages.clamp(1, 5);
 
     let req_summary = format!(
         "GET valueserp q=\"{}\" location={} pages={}",
@@ -242,4 +242,92 @@ pub fn format_for_prompt(results: &[SearchResult]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── build_serp_query ────────────────────────────────────────────────────
+
+    #[test]
+    fn build_serp_query_no_excludes() {
+        assert_eq!(build_serp_query("drone fpv", None), "drone fpv");
+    }
+
+    #[test]
+    fn build_serp_query_space_separated_excludes() {
+        let q = build_serp_query("drone fpv", Some("cheap used"));
+        assert!(q.contains("-cheap"), "expected -cheap in query");
+        assert!(q.contains("-used"), "expected -used in query");
+    }
+
+    #[test]
+    fn build_serp_query_comma_separated_excludes() {
+        let q = build_serp_query("drone fpv", Some("cheap,used"));
+        assert!(q.contains("-cheap"));
+        assert!(q.contains("-used"));
+    }
+
+    #[test]
+    fn build_serp_query_empty_exclude_string() {
+        // An empty exclude string should produce no -tokens
+        let q = build_serp_query("drone fpv", Some(""));
+        assert_eq!(q, "drone fpv");
+    }
+
+    #[test]
+    fn build_serp_query_whitespace_only_tokens_skipped() {
+        let q = build_serp_query("drone fpv", Some("  ,  "));
+        assert_eq!(q, "drone fpv");
+    }
+
+    // ── format_for_prompt ──────────────────────────────────────────────────
+
+    fn make_result(title: &str, merchant: &str, price: &str, delivery: Option<&str>) -> SearchResult {
+        SearchResult {
+            title: title.to_string(),
+            merchant: merchant.to_string(),
+            url: format!("https://example.com/{}", title),
+            price: price.to_string(),
+            image: None,
+            delivery: delivery.map(|s| s.to_string()),
+        }
+    }
+
+    #[test]
+    fn format_for_prompt_empty_slice() {
+        assert_eq!(format_for_prompt(&[]), "");
+    }
+
+    #[test]
+    fn format_for_prompt_single_result_contains_fields() {
+        let results = vec![make_result("Avata 2", "Amazon", "$499", None)];
+        let out = format_for_prompt(&results);
+        assert!(out.contains("[1]"));
+        assert!(out.contains("Avata 2"));
+        assert!(out.contains("Amazon"));
+        assert!(out.contains("$499"));
+        assert!(!out.contains("delivery:"), "no delivery line when None");
+    }
+
+    #[test]
+    fn format_for_prompt_delivery_line_present_when_some() {
+        let results = vec![make_result("Avata 2", "Amazon", "$499", Some("Free shipping"))];
+        let out = format_for_prompt(&results);
+        assert!(out.contains("delivery: Free shipping"));
+    }
+
+    #[test]
+    fn format_for_prompt_indices_are_sequential() {
+        let results = vec![
+            make_result("A", "S1", "$1", None),
+            make_result("B", "S2", "$2", None),
+            make_result("C", "S3", "$3", None),
+        ];
+        let out = format_for_prompt(&results);
+        assert!(out.contains("[1]"));
+        assert!(out.contains("[2]"));
+        assert!(out.contains("[3]"));
+    }
 }
