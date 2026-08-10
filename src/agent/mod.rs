@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const MAX_TOKENS: u32 = 8192;
+// Gemini's thinking-enabled models count reasoning tokens against maxOutputTokens,
+// so the visible JSON response can get truncated well before 8192 tokens of output.
+const GEMINI_MAX_OUTPUT_TOKENS: u32 = 32768;
 
 pub async fn run(
     provider: &str,
@@ -204,7 +207,7 @@ async fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<String,
 
     let body = serde_json::json!({
         "contents": [{ "parts": [{ "text": prompt }] }],
-        "generationConfig": { "maxOutputTokens": MAX_TOKENS }
+        "generationConfig": { "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS }
     });
 
     let client = reqwest::Client::new();
