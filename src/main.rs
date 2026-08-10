@@ -32,7 +32,10 @@ fn now_ts() -> String {
 }
 
 fn main() {
-    dioxus::launch(App);
+    // No native menu bar — the default Window/Edit menus offer nothing this app needs.
+    dioxus::LaunchBuilder::desktop()
+        .with_cfg(dioxus::desktop::Config::new().with_menu(None))
+        .launch(App);
 }
 
 #[derive(Clone, PartialEq)]
