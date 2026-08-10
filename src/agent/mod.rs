@@ -3,10 +3,20 @@ use serde::{Deserialize, Serialize};
 
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
-const MAX_TOKENS: u32 = 8192;
+// A full page of SERP results echoed back as JSON runs well past 8192 tokens,
+// which silently truncated the response mid-object. Current Claude and GPT
+// models allow far more; 32768 matches the Gemini ceiling below.
+const MAX_TOKENS: u32 = 32768;
 // Gemini's thinking-enabled models count reasoning tokens against maxOutputTokens,
 // so the visible JSON response can get truncated well before 8192 tokens of output.
 const GEMINI_MAX_OUTPUT_TOKENS: u32 = 32768;
+
+/// An LLM response plus whether the provider reported it as cut off at the
+/// output-token ceiling (`stop_reason`/`finishReason`/`finish_reason`).
+struct LlmReply {
+    text: String,
+    truncated: bool,
+}
 
 pub async fn run(
     provider: &str,
@@ -40,9 +50,19 @@ pub async fn run(
 
     match raw {
         Err(e) => (Err(e.clone()), req_summary, e),
-        Ok(raw) => {
-            let result = parse_response(&raw);
-            (result, req_summary, raw)
+        Ok(reply) => {
+            let result = if reply.truncated {
+                Err(format!(
+                    "The model ran out of output space ({} token limit) and its answer was cut off mid-way, \
+                     so there is nothing complete to show.\n\n\
+                     This happens when too many search results are sent at once. Try searching fewer pages, \
+                     narrowing the query, or adding negative keywords to cut the result count.",
+                    if provider == "gemini" { GEMINI_MAX_OUTPUT_TOKENS } else { MAX_TOKENS },
+                ))
+            } else {
+                parse_response(&reply.text)
+            };
+            (result, req_summary, reply.text)
         }
     }
 }
@@ -129,6 +149,7 @@ struct ClaudeMessage<'a> {
 #[derive(Deserialize)]
 struct ClaudeResponse {
     content: Vec<ClaudeContent>,
+    stop_reason: Option<String>,
     error: Option<ClaudeError>,
 }
 
@@ -142,7 +163,7 @@ struct ClaudeError {
     message: String,
 }
 
-async fn call_claude(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
+async fn call_claude(api_key: &str, model: &str, prompt: &str) -> Result<LlmReply, String> {
     let client = reqwest::Client::new();
 
     let request_body = ClaudeRequest {
@@ -187,9 +208,12 @@ async fn call_claude(api_key: &str, model: &str, prompt: &str) -> Result<String,
         return Err(format!("Claude error: {}", err.message));
     }
 
+    let truncated = body.stop_reason.as_deref() == Some("max_tokens");
+
     body.content
         .into_iter()
         .find_map(|c| c.text)
+        .map(|text| LlmReply { text, truncated })
         .ok_or_else(|| "Empty response from Claude.".to_string())
 }
 
@@ -198,7 +222,7 @@ async fn call_claude(api_key: &str, model: &str, prompt: &str) -> Result<String,
 const GEMINI_API_URL: &str =
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent";
 
-async fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
+async fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<LlmReply, String> {
     let url = format!(
         "{}?key={}",
         GEMINI_API_URL.replace("{model}", model),
@@ -234,9 +258,11 @@ async fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<String,
         return Err(format!("Gemini API error {}: {}", status, body));
     }
 
+    let truncated = body["candidates"][0]["finishReason"].as_str() == Some("MAX_TOKENS");
+
     body["candidates"][0]["content"]["parts"][0]["text"]
         .as_str()
-        .map(|s| s.to_string())
+        .map(|s| LlmReply { text: s.to_string(), truncated })
         .ok_or_else(|| "Empty response from Gemini.".to_string())
 }
 
@@ -244,7 +270,7 @@ async fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<String,
 
 const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
 
-async fn call_chatgpt(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
+async fn call_chatgpt(api_key: &str, model: &str, prompt: &str) -> Result<LlmReply, String> {
     let body = serde_json::json!({
         "model": model,
         "messages": [{ "role": "user", "content": prompt }],
@@ -276,9 +302,11 @@ async fn call_chatgpt(api_key: &str, model: &str, prompt: &str) -> Result<String
         return Err(format!("ChatGPT API error {}: {}", status, body));
     }
 
+    let truncated = body["choices"][0]["finish_reason"].as_str() == Some("length");
+
     body["choices"][0]["message"]["content"]
         .as_str()
-        .map(|s| s.to_string())
+        .map(|s| LlmReply { text: s.to_string(), truncated })
         .ok_or_else(|| "Empty response from ChatGPT.".to_string())
 }
 
@@ -292,5 +320,50 @@ fn parse_response(raw: &str) -> Result<SearchResponse, String> {
     let clean = clean.strip_suffix("```").unwrap_or(clean).trim();
 
     serde_json::from_str(clean)
-        .map_err(|e| format!("Failed to parse results: {}\n\n--- Last 300 chars of response ---\n{}", e, &clean[clean.len().saturating_sub(300)..]))
+        .map_err(|e| format!("Failed to parse results: {}\n\n--- Last 300 chars of response ---\n{}", e, tail(clean, 300)))
+}
+
+/// Last `n` characters of `s`. Counts characters, not bytes — slicing a byte
+/// offset would panic on any multi-byte character (e.g. a `€` price) landing
+/// across the boundary.
+fn tail(s: &str, n: usize) -> &str {
+    match s.char_indices().nth_back(n.saturating_sub(1)) {
+        Some((byte_idx, _)) => &s[byte_idx..],
+        None => s,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tail_shorter_than_limit_returns_whole_string() {
+        assert_eq!(tail("abc", 300), "abc");
+    }
+
+    #[test]
+    fn tail_truncates_to_last_n_chars() {
+        assert_eq!(tail("abcdef", 3), "def");
+    }
+
+    #[test]
+    fn tail_does_not_panic_on_multibyte_boundary() {
+        // Each '€' is 3 bytes; a byte-offset slice here would panic.
+        let s = "€€€€€";
+        assert_eq!(tail(s, 2), "€€");
+    }
+
+    #[test]
+    fn tail_empty_string() {
+        assert_eq!(tail("", 300), "");
+    }
+
+    #[test]
+    fn parse_response_truncated_json_reports_error_without_panicking() {
+        // Mid-string cut-off with a multi-byte char in the tail.
+        let raw = r#"{"groups":[{"brand":"Gracie Oaks","price":"€179","model":"Mid-Century"#;
+        let err = parse_response(raw).unwrap_err();
+        assert!(err.contains("Failed to parse results"));
+    }
 }
