@@ -168,6 +168,21 @@ body {
 }
 .btn-secondary:hover:not(:disabled) { background: #3a3a5a !important; }
 
+.setup-escape {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 20;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid #3a3a5c;
+    background: #2a2a4a;
+    color: #a0a0c0;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+.setup-escape:hover { background: #3a3a5a; color: #e0e0e0; }
+
 .error { color: #f07070 !important; }
 
 /* ── App layout ── */

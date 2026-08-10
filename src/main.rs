@@ -38,7 +38,8 @@ fn main() {
 #[derive(Clone, PartialEq)]
 enum AppState {
     Splash,
-    Setup,
+    /// `Some` when reached from the settings cog — the saved config to prefill and return to.
+    Setup(Option<AppConfig>),
     Main(AppConfig),
 }
 
@@ -70,15 +71,21 @@ fn App() -> Element {
                     on_done: move |_| {
                         let next = match config::load() {
                             Some(cfg) => AppState::Main(cfg),
-                            None => AppState::Setup,
+                            None => AppState::Setup(None),
                         };
                         state.set(next);
                     }
                 }
             },
-            AppState::Setup => rsx! {
+            AppState::Setup(existing) => rsx! {
                 Setup {
-                    on_done: move |cfg| state.set(AppState::Main(cfg))
+                    existing: existing.clone(),
+                    on_done: move |cfg| state.set(AppState::Main(cfg)),
+                    on_cancel: move |_| {
+                        if let Some(cfg) = existing.clone() {
+                            state.set(AppState::Main(cfg));
+                        }
+                    },
                 }
             },
             AppState::Main(cfg) => rsx! {
@@ -96,7 +103,10 @@ fn App() -> Element {
                                     None
                                 }
                             }),
-                            on_settings: move |_| state.set(AppState::Setup),
+                            on_settings: {
+                                let cfg = cfg.clone();
+                                move |_| state.set(AppState::Setup(Some(cfg.clone())))
+                            },
                             on_search: move |q: SearchQuery| {
                                 let cfg = cfg.clone();
                                 async move {

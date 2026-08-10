@@ -13,15 +13,38 @@ enum SetupStep {
 }
 
 #[component]
-pub fn Setup(on_done: EventHandler<AppConfig>) -> Element {
-    let mut step = use_signal(|| SetupStep::PickProvider);
-    let mut llm_key = use_signal(String::new);
-    let mut selected_model = use_signal(String::new);
-    let mut search_key = use_signal(String::new);
+pub fn Setup(
+    existing: Option<AppConfig>,
+    on_done: EventHandler<AppConfig>,
+    on_cancel: EventHandler<()>,
+) -> Element {
+    // Editing saved credentials: prefill every field and skip the provider picker, so
+    // opening settings by accident can never wipe the stored keys.
+    let editing = existing.is_some();
+    let saved_provider = existing
+        .as_ref()
+        .and_then(|c| Provider::from_id(&c.llm_provider));
+    let (saved_llm_key, saved_model, saved_search_key) = match &existing {
+        Some(c) => (
+            c.llm_api_key.clone(),
+            c.llm_model.clone(),
+            c.search_api_key.clone(),
+        ),
+        None => (String::new(), String::new(), String::new()),
+    };
+
+    let initial_step = match saved_provider {
+        Some(p) => SetupStep::EnterKey(p),
+        None => SetupStep::PickProvider,
+    };
+    let mut step = use_signal(|| initial_step);
+    let mut llm_key = use_signal(|| saved_llm_key);
+    let mut selected_model = use_signal(|| saved_model);
+    let mut search_key = use_signal(|| saved_search_key);
     let mut error = use_signal(String::new);
     let mut loading = use_signal(|| false);
 
-    match step() {
+    let body = match step() {
         SetupStep::PickProvider => rsx! {
             ProviderPicker {
                 on_pick: move |p| {
@@ -42,7 +65,11 @@ pub fn Setup(on_done: EventHandler<AppConfig>) -> Element {
                     img { src: LOGO1, class: "setup-logo", alt: "Errand Boy" }
                     h2 { "{provider_label} API key" }
                     p {
-                        "Enter your {provider_label} API key. "
+                        if editing {
+                            "Your saved {provider_label} key is filled in — leave it as is to keep it. "
+                        } else {
+                            "Enter your {provider_label} API key. "
+                        }
                         a { href: "{api_key_url}", target: "_blank", "Get one here →" }
                     }
                     input {
@@ -60,8 +87,11 @@ pub fn Setup(on_done: EventHandler<AppConfig>) -> Element {
                     div { class: "setup-row",
                         button {
                             class: "btn-secondary",
-                            onclick: move |_| step.set(SetupStep::PickProvider),
-                            "← Back"
+                            onclick: move |_| {
+                                error.set(String::new());
+                                step.set(SetupStep::PickProvider);
+                            },
+                            "← Change provider"
                         }
                         button {
                             disabled: loading() || llm_key().trim().is_empty(),
@@ -89,7 +119,8 @@ pub fn Setup(on_done: EventHandler<AppConfig>) -> Element {
         },
 
         SetupStep::PickModel(provider, models) => {
-            if selected_model().is_empty()
+            // Keep a saved model when the account still offers it; otherwise fall back.
+            if !models.contains(&selected_model())
                 && let Some(default) = models.first() {
                     selected_model.set(default.clone());
                 }
@@ -132,7 +163,11 @@ pub fn Setup(on_done: EventHandler<AppConfig>) -> Element {
                 img { src: LOGO1, class: "setup-logo", alt: "Errand Boy" }
                 h2 { "Value SERP API key" }
                 p {
-                    "Enter your Value SERP key for product search. "
+                    if editing {
+                        "Your saved Value SERP key is filled in — leave it as is to keep it. "
+                    } else {
+                        "Enter your Value SERP key for product search. "
+                    }
                     a { href: "https://app.valueserp.com/signup", target: "_blank", "Get one free." }
                 }
                 input {
@@ -152,11 +187,11 @@ pub fn Setup(on_done: EventHandler<AppConfig>) -> Element {
                         class: "btn-secondary",
                         onclick: {
                             let provider = provider.clone();
-                            let model = model.clone();
                             move |_| {
-                                // go back to model picker — re-fetch not needed, pass empty vec
-                                // to trigger re-use of existing model selection
-                                step.set(SetupStep::PickModel(provider.clone(), vec![model.clone()]))
+                                // Back to the LLM key step — Continue there re-fetches the full
+                                // model list, which going straight to PickModel could not do.
+                                error.set(String::new());
+                                step.set(SetupStep::EnterKey(provider.clone()));
                             }
                         },
                         "← Back"
@@ -180,11 +215,23 @@ pub fn Setup(on_done: EventHandler<AppConfig>) -> Element {
                                 }
                             }
                         },
-                        "Finish setup"
+                        if editing { "Save" } else { "Finish setup" }
                     }
                 }
             }
         },
+    };
+
+    rsx! {
+        // Escape hatch: only when there is a config to come back to.
+        if editing {
+            button {
+                class: "setup-escape",
+                onclick: move |_| on_cancel.call(()),
+                "✕ Back to the app"
+            }
+        }
+        {body}
     }
 }
 

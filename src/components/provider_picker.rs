@@ -17,6 +17,15 @@ impl Provider {
         }
     }
 
+    pub fn from_id(id: &str) -> Option<Provider> {
+        match id {
+            "gemini" => Some(Provider::Gemini),
+            "claude" => Some(Provider::Claude),
+            "chatgpt" => Some(Provider::ChatGpt),
+            _ => None,
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Provider::Gemini => "Gemini",
