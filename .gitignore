@@ -1,1 +1,4 @@
 /target
+
+# Build output. Binaries ship as GitHub Release attachments, not in the tree.
+/release
