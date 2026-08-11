@@ -2,6 +2,10 @@
 name = "errand_boy"
 version = "0.1.0"
 edition = "2024"
+description = "Desktop shopping assistant that groups and scores Google Shopping results with an LLM"
+repository = "https://github.com/PSarapata/errand_boy"
+license = "MIT"
+readme = "README.md"
 
 [[bin]]
 name = "errand_boy"
